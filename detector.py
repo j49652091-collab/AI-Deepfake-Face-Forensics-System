@@ -1,87 +1,115 @@
-from PIL import Image
-import numpy as np
-import cv2
-import hashlib
-from skimage.feature import local_binary_pattern
+import streamlit as st
+import tempfile
+
+from login import login
+from detector import detect_image
+from face_recognition import compare_faces
 
 
-def generate_signature(hist):
+st.set_page_config(
+    page_title="AI Forensic System",
+    layout="wide"
+)
 
-    text=",".join(
-        [str(round(x,5))
-        for x in hist]
+# ----------------------------
+# STYLE
+# ----------------------------
+with open("style.css") as f:
+    st.markdown(
+        f"<style>{f.read()}</style>",
+        unsafe_allow_html=True
     )
 
-    signature=hashlib.sha256(
-        text.encode()
-    ).hexdigest()
+st.title("🧬 AI Deepfake & Face Forensics System")
 
-    return signature[:32]
+# ----------------------------
+# LOGIN STATE
+# ----------------------------
+if "logged" not in st.session_state:
+    st.session_state.logged = False
 
+# ----------------------------
+# LOGIN
+# ----------------------------
+if not st.session_state.logged:
 
-def detect_image(uploaded_image):
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
 
-    image=Image.open(
-        uploaded_image
-    ).convert("RGB")
+    if st.button("Login"):
 
-    img=np.array(image)
+        if login(username, password):
+            st.session_state.logged = True
+            st.rerun()
+        else:
+            st.error("Wrong Credentials")
 
-    gray=cv2.cvtColor(
-        img,
-        cv2.COLOR_RGB2GRAY
-    )
+# ----------------------------
+# MAIN APP
+# ----------------------------
+else:
 
-    gray=cv2.resize(
-        gray,
-        (256,256)
-    )
+    tab1, tab2 = st.tabs([
+        "🧬 Detection",
+        "👤 Face Match"
+    ])
 
-    # texture fingerprint
-    lbp=local_binary_pattern(
-        gray,
-        P=16,
-        R=2,
-        method="uniform"
-    )
+    # =========================
+    # TAB 1 - DETECTION
+    # =========================
+    with tab1:
 
-    hist,_=np.histogram(
-        lbp.ravel(),
-        bins=25,
-        range=(0,25)
-    )
+        img = st.file_uploader("Upload Image")
 
-    hist=hist.astype("float")
+        if img:
 
-    hist=hist/(
-        hist.sum()+1e-7
-    )
+            status, score, signature, image = detect_image(img)
 
-    variance=np.var(hist)
+            col1, col2 = st.columns(2)
 
-    score=round(
-        (1-min(
-        variance*500,
-        .90
-        ))*100,
-        2
-    )
+            with col1:
+                st.image(image, caption="Uploaded Image")
 
-    signature=generate_signature(
-        hist
-    )
+            with col2:
+                st.write("Result:", status)
 
-    if score>=75:
+                st.metric(
+                    "Confidence Score",
+                    str(score) + "%"
+                )
 
-        status="Real Human"
+                st.subheader("Digital Signature")
+                st.code(signature)
 
-    else:
+    # =========================
+    # TAB 2 - FACE MATCH
+    # =========================
+    with tab2:
 
-        status="AI / Edited"
+        col1, col2 = st.columns(2)
 
-    return (
-        status,
-        score,
-        signature,
-        image
-    )
+        img1 = col1.file_uploader("First Image")
+        img2 = col2.file_uploader("Second Image")
+
+        if img1 and img2:
+
+            col1.image(img1, caption="Image 1")
+            col2.image(img2, caption="Image 2")
+
+            def save(file):
+                t = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+                t.write(file.read())
+                t.close()
+                return t.name
+
+            path1 = save(img1)
+            path2 = save(img2)
+
+            result = compare_faces(path1, path2)
+
+            st.metric(
+                "Similarity",
+                str(result["similarity"]) + "%"
+            )
+
+            st.success(result["status"])
